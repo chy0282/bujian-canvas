@@ -1,0 +1,7 @@
+.claude/
+tools/.cache/
+tools/sheet_*.png
+**/__pycache__/
+.env
+.env.*
+*.log
