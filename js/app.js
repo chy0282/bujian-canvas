@@ -261,7 +261,7 @@ function renderWelcome() {
           h('h1', null, '部件識字畫布'),
           h('p', null, '和豆豆一起，把部件拼成字！'),
           h('div', { class: 'welcome-actions' },
-            h('button', { class: 'btn big', onclick: () => { Snd.click(); S.homeTab = 'free'; startGame(1, selWords()); } }, '開始遊戲', icon('arrow')),
+            h('button', { class: 'btn big', onclick: () => { Snd.click(); S.homeTab = 'free'; startGame(3, selWords()); } }, '開始遊戲', icon('arrow')),
             h('button', { class: 'btn white', onclick: () => renderHome('task') }, icon('clipboard'), '老師任務'))),
         h('div', { class: 'welcome-art' }, mascot(300, 'hello'), demo)),
       h('section', { class: 'activity-list' },
