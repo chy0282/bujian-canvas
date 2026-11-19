@@ -4,7 +4,7 @@ window.WORD_BANKS = [
   {
     id: 'p1',
     title: '我是小一生',
-    defaultChapters: [0, 1],
+    defaultChapters: [2, 3],
     chapters: [
       {
         title: '第一章',
@@ -26,8 +26,12 @@ window.WORD_BANKS = [
 
 // 只供「同部件組字」使用的課外拓展詞彙。
 window.EXTENSION_WORD_GROUPS = [
-  { name: '氵', label: '三點水', reviewWords: ['游泳'], words: ['河水', '海水', '水池'], targets: ['河', '海', '池'] },
+  { name: '言', label: '言字部', defaultSelected: true, reviewWords: ['談天'], words: ['說話', '語文', '日記'], targets: ['話', '語', '記'] },
+  { name: '扌', label: '提手旁', defaultSelected: true, reviewWords: ['拉'], words: ['打球', '拍手', '抱起'], targets: ['打', '拍', '抱'] },
+  { name: '女', label: '女字部', defaultSelected: true, reviewWords: ['媽媽'], words: ['姐姐', '妹妹', '牛奶'], targets: ['姐', '妹', '奶'] },
+  { name: '日', label: '日字部', defaultSelected: true, reviewWords: ['早餐'], words: ['時間', '晴天', '明天'], targets: ['時', '晴', '明'] },
   { name: '木', label: '木字部', reviewWords: ['校車'], words: ['樹林', '桃子', '村子'], targets: ['林', '桃', '村'] },
-  { name: '口', label: '口字部', reviewWords: ['吃'], words: ['叫門', '吹氣', '唱歌'], targets: ['叫', '吹', '唱'] }
+  { name: '口', label: '口字部', reviewWords: ['吃'], words: ['叫門', '吹氣', '唱歌'], targets: ['叫', '吹', '唱'] },
+  { name: '氵', label: '三點水', reviewWords: ['游泳'], words: ['河水', '海水', '水池'], targets: ['河', '海', '池'] }
 ];
 

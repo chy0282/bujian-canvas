@@ -4,6 +4,9 @@
 
 const courseData = window.CHAR_DATA;
 const D = { ...courseData, ...window.EXTENSION_CHAR_DATA };
+const structures = window.CHAR_STRUCTURES;
+const coachScripts = window.DOUDOU_MESSAGES;
+const coachHistory = new Map();
 const W = 1200, H = 720;            // 畫布（舞台）邏輯尺寸
 const app = document.getElementById('app');
 const fx = document.getElementById('fx');
@@ -25,9 +28,10 @@ function h(tag, props, ...kids) {
 const shuffle = a => { a = [...a]; for (let i = a.length - 1; i > 0; i--) { const j = Math.random() * (i + 1) | 0; [a[i], a[j]] = [a[j], a[i]]; } return a; };
 const pick = a => a[Math.random() * a.length | 0];
 const rand = (a, b) => a + Math.random() * (b - a);
-const partSrc = f => 'assets/parts/' + f;
+const partSrc = f => 'assets/parts/' + f + '?v=classroom-picture-20261119';
 const charSrc = ch => 'assets/chars/' + D[ch].img;
 const isMulti = ch => D[ch] && D[ch].parts.length > 1;
+const hasTwoParts = ch => courseData[ch]?.parts.length === 2;
 const uniq = a => [...new Set(a)];
 const PASTELS = ['#dff7ec', '#dff0ff', '#fff3cc', '#ffe6d6', '#f0e8ff', '#ffe3ec'];
 const icon = name => h('img', { class: 'ui-icon', src: 'assets/ui/' + name + '.webp', alt: '', draggable: 'false' });
@@ -45,6 +49,7 @@ const S = {
   chap: null,
   muted: store.get('muted', false),
   stars: store.get('stars', 0),
+  learningMode: store.get('learningMode', 'classroom'),
   homeTab: 'free'
 };
 const banks = () => [...window.WORD_BANKS, ...store.get('customBanks', [])];
@@ -92,13 +97,38 @@ function selWords() {
 function addStars(n) { S.stars += n; store.set('stars', S.stars); document.querySelectorAll('.star-count').forEach(e => e.textContent = S.stars); }
 
 const ACTS = [
-  { id: 3, name: '部件補全', icon: 'puzzle', c: 'orange', desc: '找出缺少的部件' },
-  { id: 1, name: '看圖拼字', icon: 'picture', c: 'green', desc: '看圖拼出整個詞語' },
-  { id: 4, name: '同部件組字', icon: 'link', c: 'purple', desc: '補上部件，再看看詞語' },
-  { id: 5, name: '限時拼字', icon: 'timer', c: 'pink', desc: '看看限時內能拼出幾個字' },
-  { id: 2, name: '自由拼字', icon: 'palette', c: 'blue', desc: '用部件拼你認識的字' }
+  { id: 3, name: '部件補全', learningMode: 'classroom', icon: 'puzzle', c: 'orange', desc: '找出缺少的部件' },
+  { id: 1, name: '看圖拼字', learningMode: 'explore', learningModes: ['explore', 'classroom'], icon: 'picture', c: 'green', desc: '看圖拼出整個詞語' },
+  { id: 4, name: '同部件組字', learningMode: 'classroom', icon: 'link', c: 'purple', desc: '補上部件，再看看詞語' },
+  { id: 6, name: '部件記憶翻翻樂', learningMode: 'classroom', icon: 'book', c: 'blue', desc: '記住部件，翻兩張配成字' },
+  { id: 5, name: '限時拼字', learningMode: 'explore', icon: 'timer', c: 'pink', desc: '看看限時內能拼出幾個字' },
+  { id: 2, name: '自由拼字', learningMode: 'explore', icon: 'palette', c: 'blue', desc: '用部件拼你認識的字' }
 ];
 const actById = id => ACTS.find(a => a.id === id);
+const LEARNING_MODES = [
+  { id: 'explore', name: '自主探索', desc: '學生用自己的裝置，自己動手拼字', firstActivity: 1 },
+  { id: 'classroom', name: '課堂教學', desc: '投影或共用螢幕，老師帶領全班拼字', firstActivity: 3 }
+];
+const learningMode = (id = S.learningMode) => LEARNING_MODES.find(mode => mode.id === id) || LEARNING_MODES[1];
+const activityInMode = (activity, modeId = learningMode().id) => !!activity && (activity.learningModes || [activity.learningMode]).includes(modeId);
+const modeForActivity = activity => activityInMode(activity) ? learningMode() : learningMode(activity.learningMode);
+const modeActivities = () => ACTS.filter(activity => activityInMode(activity));
+
+function modeChooser(redraw) {
+  return h('fieldset', { class: 'learning-mode-selector' },
+    h('legend', null, '選擇學習模式'),
+    h('div', { class: 'learning-mode-options' }, LEARNING_MODES.map(mode => h('button', {
+      class: 'learning-mode-choice',
+      'data-learning-mode': mode.id,
+      'aria-pressed': String(mode.id === learningMode().id),
+      onclick: () => {
+        if (learningMode().id === mode.id) return;
+        S.learningMode = mode.id; store.set('learningMode', mode.id); Snd.click();
+        redraw();
+        app.querySelector('[data-learning-mode="' + mode.id + '"]').focus({ preventScroll: true });
+      }
+    }, h('strong', null, mode.name), h('span', null, mode.desc)))));
+}
 
 /* ============ 音效（WebAudio 合成，毋須音效檔） ============ */
 const Snd = {
@@ -234,13 +264,14 @@ function brandBar(back) {
 
 function lessonLabel() {
   const b = bank(), chapters = chapSel();
-  let chapter = chapters.length === 1 ? b.chapters[chapters[0]].title : '';
+  let chapter = chapters.map(index => b.chapters[index].title).join('、');
   if (b.id === 'p1' && chapters.length === 2 && chapters.includes(0) && chapters.includes(1)) chapter = '第一至二章';
   return '《' + b.title + '》' + (chapter ? '・' + chapter : '');
 }
 
 function activityCards() {
-  return h('div', { class: 'acts' }, ACTS.map(a => h('button', {
+  const activities = modeActivities();
+  return h('div', { class: 'acts', style: { '--activity-columns': activities.length } }, activities.map(a => h('button', {
     class: 'act-card tone-' + a.c,
     onclick: () => { Snd.click(); S.homeTab = 'free'; startGame(a.id, selWords()); }
   }, h('span', { class: 'act-art' }, icon(a.icon)), h('strong', null, a.name), h('small', null, a.desc))));
@@ -248,6 +279,7 @@ function activityCards() {
 
 function renderWelcome() {
   stopGame();
+  const greeting = coachPhrase('welcome');
   const demo = h('div', { class: 'demo', role: 'img', 'aria-label': '木加交，拼成校字' },
     h('div', { class: 'demo-tile wood' }, h('img', { src: partSrc(D['校'].parts[0].f), alt: '' })),
     glyph('+'),
@@ -259,13 +291,15 @@ function renderWelcome() {
       h('section', { class: 'welcome-card' },
         h('div', { class: 'welcome-copy' },
           h('h1', null, '部件識字畫布'),
-          h('p', null, '和豆豆一起，把部件拼成字！'),
+          h('div', { class: 'welcome-greeting' }, h('strong', null, '豆豆說'),
+            h('p', null, greeting.text), h('small', null, greeting.detail)),
+          modeChooser(renderWelcome),
           h('div', { class: 'welcome-actions' },
-            h('button', { class: 'btn big', onclick: () => { Snd.click(); S.homeTab = 'free'; startGame(3, selWords()); } }, '開始遊戲', icon('arrow')),
+            h('button', { class: 'btn big', onclick: () => { Snd.click(); S.homeTab = 'free'; startGame(learningMode().firstActivity, selWords()); } }, '開始遊戲', icon('arrow')),
             h('button', { class: 'btn white', onclick: () => renderHome('task') }, icon('clipboard'), '老師任務'))),
         h('div', { class: 'welcome-art' }, mascot(300, 'hello'), demo)),
       h('section', { class: 'activity-list' },
-        h('div', { class: 'section-bar' }, h('h2', null, '選擇活動'),
+        h('div', { class: 'section-bar' }, h('h2', null, learningMode().name + '活動'),
           h('button', { class: 'lesson-button', onclick: () => renderHome('free') }, icon('book'), lessonLabel(), glyph('›'))),
         activityCards()))));
 }
@@ -273,11 +307,11 @@ function renderWelcome() {
 function renderHome(tab) {
   stopGame();
   if (tab) S.homeTab = tab;
-  const tasks = store.get('tasks', []).filter(t => actById(t.act));
-  const tabs = h('div', { class: 'tabs', 'aria-label': '遊戲方式' },
-    h('button', { class: 'tab' + (S.homeTab === 'free' ? ' on' : ''), 'aria-pressed': String(S.homeTab === 'free'), onclick: () => renderHome('free') }, icon('palette'), '自由探索'),
+  const tasks = store.get('tasks', []).filter(t => activityInMode(actById(t.act)));
+  const tabs = h('div', { class: 'tabs', 'aria-label': '活動與任務' },
+    h('button', { class: 'tab' + (S.homeTab === 'free' ? ' on' : ''), 'aria-pressed': String(S.homeTab === 'free'), onclick: () => renderHome('free') }, icon('book'), '課文與活動'),
     h('button', { class: 'tab' + (S.homeTab === 'task' ? ' on' : ''), 'aria-pressed': String(S.homeTab === 'task'), onclick: () => renderHome('task') }, icon('clipboard'), '老師任務'));
-  const body = h('main', { class: 'home-body page-width' }, tabs);
+  const body = h('main', { class: 'home-body page-width' }, modeChooser(() => renderHome()), tabs);
   if (S.homeTab === 'free') {
     const b = bank(), selected = chapSel();
     const field = h('select', {
@@ -303,12 +337,12 @@ function renderHome(tab) {
             group.label ? h('h3', null, group.label) : null,
             h('div', { class: 'wordrow' }, group.words.filter(validWord).map(w => h('span', { class: 'word-tag' }, w))))));
       }))),
-    h('h2', null, '選擇活動'), activityCards());
+    h('h2', null, learningMode().name + '活動'), activityCards());
   } else {
     body.append(h('h1', null, '老師任務'));
     if (!tasks.length) body.append(h('div', { class: 'empty' }, mascot(130),
-      h('p', null, '老師還沒有指定任務。'),
-      h('button', { class: 'btn', onclick: () => renderHome('free') }, '去自由探索')));
+      h('p', null, '這個模式暫時沒有老師任務。'),
+      h('button', { class: 'btn', onclick: () => renderHome('free') }, '選擇活動')));
     tasks.forEach(t => {
       const a = actById(t.act);
       body.append(h('article', { class: 'task-card tone-' + a.c },
@@ -335,6 +369,7 @@ function stopGame() {
   if (!G) return;
   clearInterval(G.timer);
   clearTimeout(G.wordHintTimer);
+  clearTimeout(G.memoryHintTimer);
   clearCanvasHint();
   G.ro && G.ro.disconnect();
   if ('speechSynthesis' in window) speechSynthesis.cancel();
@@ -352,42 +387,45 @@ function startGame(act, words, opts = {}) {
   }
   if (!words.length) return renderHome();
   const a = actById(act);
+  S.learningMode = modeForActivity(a).id; store.set('learningMode', S.learningMode);
   G = { act, words: uniq(words), opts, pieces: [], boxes: [], z: 10, f: 1, ox: 0, oy: 0, unit: 300 / 768, qi: 0, total: 0, earned: 0, mistakes: 0, sel: null, frozen: false, found: [], round: 0 };
 
   const progress = h('div', { class: 'progress', 'aria-label': '活動進度' }, h('i'), h('b'));
   const right = h('div', { class: 'game-metrics' });
-  const nav = h('nav', { class: 'game-nav page-width', 'aria-label': '轉換活動' },
-    ACTS.map(next => h('button', { class: 'mode-button tone-' + next.c,
+  const nav = h('nav', { class: 'game-nav page-width', 'aria-label': learningMode().name + '活動' },
+    modeActivities().map(next => h('button', { class: 'mode-button tone-' + next.c,
       'aria-current': next.id === act ? 'page' : null,
       onclick: () => { if (next.id !== act) { Snd.click(); startGame(next.id, act === 4 ? selWords() : words); } }
     }, icon(next.icon), next.name)));
   const top = h('header', { class: 'app-header' }, h('div', { class: 'topbar' },
     h('button', { class: 'btn white home-link', onclick: () => { Snd.click(); renderHome(opts.task ? 'task' : 'free'); } }, icon('home'), opts.task ? '老師任務' : '選活動'),
-    h('span', { class: 'game-lesson' }, opts.task ? opts.task.name || '老師任務' : act === 4 ? '課外拓展・學習新字' : lessonLabel()),
+    h('div', { class: 'game-context' }, h('strong', { class: 'game-mode-name' }, learningMode().name),
+      h('span', { class: 'game-lesson' }, opts.task ? opts.task.name || '老師任務' : act === 4 ? '課外拓展・學習新字' : lessonLabel())),
     h('div', { class: 'spacer' }), right, starPill(), musicBtn(), muteBtn()));
   const libGrid = h('div', { class: 'lib-grid' });
   const libPaging = h('div', { class: 'lib-paging' });
   const libHead = h('div', { class: 'lib-head' }, h('h2', null, '部件庫'), h('small', null, '拖動或點選部件'));
   const lib = h('aside', { class: 'lib', 'aria-label': '部件庫' }, libHead, libGrid, libPaging);
   const stage = h('div', { class: 'stage' });
-  const helper = h('div', { class: 'helper', role: 'status' });
+  const helper = h('section', { class: 'helper', role: 'status', 'aria-label': '豆豆陪你拼字', 'aria-atomic': 'true' });
   const board = h('div', { class: 'board', tabindex: '0', 'aria-label': '拼字畫布' }, stage);
   const clue = h('div', { class: 'clue' });
   const boardTop = h('div', { class: 'board-top' });
   const toolbar = h('div', { class: 'toolbar' });
-  const heading = h('div', { class: 'board-heading' }, h('div', null, h('h1', null, a.name), h('p', null, a.desc)), progress);
+  const heading = h('div', { class: 'board-heading' },
+    h('div', { class: 'board-title' }, h('div', null, h('h1', null, a.name), h('p', null, a.desc)), progress), helper);
   const main = h('main', { class: 'game-main page-width' }, lib, h('section', { class: 'board-col' },
-    heading, boardTop, h('div', { class: 'play-area' }, clue, board), helper, toolbar));
+    heading, boardTop, h('div', { class: 'play-area' }, clue, board), toolbar));
   app.replaceChildren(h('div', { class: 'screen game mode-' + act }, top, opts.task ? null : nav, main));
   Object.assign(G, { stage, boardEl: board, clue, libGrid, libHead, libPaging, helper, toolbar, boardTop, progressEl: progress, topRight: right });
   board.addEventListener('click', e => {
-    if (G.frozen || e.target.closest('button, .piece')) return;
+    if (!G || G.frozen || e.target.closest('button, .piece')) return;
     const pos = toStage(e.clientX, e.clientY);
     if (G.chosen) placeChosen(pos);
     else if (G.sel) moveSelected(pos);
   });
   board.addEventListener('keydown', e => {
-    if (e.target !== board || G.frozen || !G.chosen || !['Enter', ' '].includes(e.key)) return;
+    if (e.target !== board || !G || G.frozen || !G.chosen || !['Enter', ' '].includes(e.key)) return;
     e.preventDefault(); placeChosen(trayPosition());
   });
 
@@ -404,6 +442,7 @@ function fitStage() {
   G.f = Math.min(r.width / W, r.height / H);
   G.ox = (r.width - W * G.f) / 2; G.oy = (r.height - H * G.f) / 2;
   G.stage.style.transform = `translate(${G.ox}px, ${G.oy}px) scale(${G.f})`;
+  G.boxes.forEach(positionStructureLabel);
 }
 function toStage(cx, cy) { const r = G.boardEl.getBoundingClientRect(); return { x: (cx - r.left - G.ox) / G.f, y: (cy - r.top - G.oy) / G.f }; }
 function toClient(x, y) { const r = G.boardEl.getBoundingClientRect(); return { x: r.left + G.ox + x * G.f, y: r.top + G.oy + y * G.f }; }
@@ -416,8 +455,10 @@ function setProgress(done, total, label) {
 
 function clearBoard() {
   clearTimeout(G.wordHintTimer);
+  clearTimeout(G.memoryHintTimer);
   clearCanvasHint();
   G.reviewPanel?.remove();
+  G.boardEl.querySelectorAll('.board-structure').forEach(label => label.remove());
   G.round++;
   select(null);
   chooseTile(null);
@@ -436,12 +477,14 @@ function showWordHints() {
   hints.forEach(box => {
     box.wordHint.hidden = false;
   });
+  doudou('hintShape');
+  const revision = G.coachRevision;
   G.wordHintTimer = duringGame(() => {
     hints.forEach(box => {
       box.wordHint.hidden = true;
     });
+    if (G.coachRevision === revision && !G.frozen) doudou('hintEnd');
   }, 1000);
-  say('看看字格裏的字形，記住部件的位置！');
 }
 
 function clearCanvasHint() {
@@ -454,7 +497,7 @@ function showCanvasHint(chars) {
   const names = new Set([...G.libGrid.querySelectorAll('.part-card')].map(card => card.dataset.name));
   const possible = chars.filter(ch => D[ch].parts.every(part => names.has(part.n)));
   if (!possible.length) {
-    say('這頁的部件未能拼出完整字，換一頁再試試提示。');
+    doudou('hintNoMatch');
     return;
   }
   const fresh = possible.filter(ch => !G.found.includes(ch));
@@ -463,8 +506,12 @@ function showCanvasHint(chars) {
   const hint = h('img', { class: 'canvas-word-hint', src: charSrc(ch), alt: ch, draggable: 'false',
     style: { left: (W - size) / 2 + 'px', top: (H - size) / 2 + 'px', width: size + 'px', height: size + 'px' } });
   G.stage.append(hint);
-  G.canvasHintTimer = duringGame(() => hint.remove(), 1000);
-  say('看看淡淡的字形，試試拼出這個字。');
+  doudou('hintShape');
+  const revision = G.coachRevision;
+  G.canvasHintTimer = duringGame(() => {
+    hint.remove();
+    if (G.coachRevision === revision && !G.frozen) doudou('hintEnd');
+  }, 1000);
 }
 
 /* ---------- 部件（畫布上的物件） ---------- */
@@ -656,7 +703,7 @@ function chooseTile(it, card) {
   if (G.chosen) {
     card.setAttribute('aria-pressed', 'true');
     select(null); Snd.pick();
-    say('點一下畫布或格子，放下部件。');
+    doudou('choosePart');
   }
 }
 function trayPosition() {
@@ -773,6 +820,13 @@ function boxShowChar(b, ch) { // 字拼好後換成完整字形
   b.wordHint?.remove();
   b.el.classList.add('done', 'full-char');
   b.el.setAttribute('aria-label', '已拼好 ' + ch);
+  b.structureLabel?.remove();
+  b.structureLabel = structureBadge(ch);
+  if (b.structureLabel) {
+    b.structureLabel.classList.add('board-structure');
+    G.boardEl.append(b.structureLabel);
+    positionStructureLabel(b);
+  }
   duringGame(() => {
     G.pieces.filter(p => p.locked && p.box === b).forEach(p => removePiece(p));
     b.el.append(h('img', { src: charSrc(ch), alt: ch, draggable: 'false' }));
@@ -781,10 +835,79 @@ function boxShowChar(b, ch) { // 字拼好後換成完整字形
   burst(c.x, c.y, 14);
 }
 
+/* 字形結構：在完整字形以外顯示示意小格，不在筆畫上加線或改色。 */
+function structureBadge(ch) {
+  const type = structures.characters[ch];
+  // 小一目前只展示上下及左右結構，其餘字仍可正常拼砌。
+  if (type !== 'tb' && type !== 'lr') return null;
+  const info = structures.types[type];
+  const name = info.label.endsWith('結構') ? info.label.slice(0, -2) : info.label;
+  const chunks = [name];
+  if (info.label.endsWith('結構')) chunks.push('結構');
+  return h('span', { class: 'structure-badge', 'data-structure': type, 'data-char': ch,
+    title: '「' + ch + '」：' + info.label + (info.detail ? '（' + info.detail + '）' : '') },
+    h('span', { class: 'structure-diagram', 'data-enclosure': structures.enclosure[ch], 'aria-hidden': 'true' }, h('i')),
+    h('span', { class: 'structure-name' }, chunks.map(chunk => h('span', null, chunk))));
+}
+function positionStructureLabel(box) {
+  const label = box.structureLabel;
+  if (!label) return;
+  const width = Math.min(174, box.size * G.f - 5);
+  label.classList.toggle('is-compact', width < 122);
+  label.style.width = Math.max(48, width) + 'px';
+  label.style.left = G.ox + (box.x + box.size / 2) * G.f + 'px';
+  label.style.top = G.oy + (box.y + box.size) * G.f + 11 + 'px';
+}
+
 /* ---------- 吉祥物提示 ---------- */
-function say(text, mood = 'happy', bad = false) {
+const COACH_STYLES = {
+  guide: { label: '一起試試', icon: 'puzzle' },
+  hint: { label: '豆豆小提示', icon: 'bulb' },
+  support: { label: '慢慢來，再試試', icon: 'link' },
+  cheer: { label: '豆豆為你喝彩', icon: 'star' }
+};
+function coachPhrase(event, variables = {}) {
+  const script = coachScripts[event];
+  const previous = coachHistory.get(event);
+  const choices = script.lines.map((line, index) => ({ line, index })).filter(item => item.index !== previous || script.lines.length === 1);
+  const choice = pick(choices);
+  coachHistory.set(event, choice.index);
+  const values = { next: '再找一個部件，繼續試試新的組合。', ...variables };
+  const fill = text => text.replace(/\{(\w+)\}/g, (_, key) => String(values[key] ?? ''));
+  return { tone: script.tone, text: fill(choice.line[0]), detail: fill(choice.line[1]) };
+}
+function coachCard(message, compact = false) {
+  const style = COACH_STYLES[message.tone];
+  const note = h('p', { class: 'coach-audio-note', hidden: true }, '這部裝置未能播放粵語，請聽老師讀一讀。');
+  const avatar = h('button', { class: 'coach-avatar', type: 'button', 'aria-label': '聽豆豆說話',
+    title: '按豆豆，聽聽他的說話', onclick: () => {
+      note.hidden = speak(message.text + ' ' + message.detail);
+    } }, mascot(compact ? 78 : 106, message.tone === 'cheer' ? 'cheer' : ''),
+    h('span', { class: 'coach-listen' }, icon('speaker'), '聽豆豆說'));
+  return h('div', { class: 'coach' + (compact ? ' coach-compact' : ''), 'data-tone': message.tone }, avatar,
+    h('div', { class: 'coach-bubble' },
+      h('div', { class: 'coach-meta' }, h('strong', null, '豆豆'), h('span', null, icon(style.icon), style.label)),
+      h('p', { class: 'say' }, message.text), h('p', { class: 'coach-detail' }, message.detail), note));
+}
+function showCoach(message, event = '') {
   if (!G) return;
-  G.helper.replaceChildren(mascot(49, mood === 'cheer' ? 'cheer' : ''), h('p', { class: 'say' + (bad ? ' bad' : '') }, text));
+  const restoreFocus = G.helper.contains(document.activeElement);
+  G.coachRevision = (G.coachRevision || 0) + 1;
+  G.coachLine = message;
+  G.helper.dataset.event = event;
+  G.helper.replaceChildren(coachCard(message));
+  if (restoreFocus) G.helper.querySelector('.coach-avatar').focus({ preventScroll: true });
+}
+function doudou(event, variables) {
+  if (G) showCoach(coachPhrase(event, variables), event);
+}
+function say(text, mood = 'happy', bad = false) {
+  const tone = bad ? 'support' : mood === 'cheer' ? 'cheer' : mood === 'think' ? 'hint' : 'guide';
+  showCoach({ tone, text, detail: bad ? '不用急，豆豆陪你一起找線索。' : '一步一步試，豆豆陪着你。' });
+}
+function characterNext(ch, next) {
+  const type = structures.characters[ch];
+  return (type === 'lr' ? '看看它的左右兩部分。' : type === 'tb' ? '看看它的上下兩部分。' : '') + next;
 }
 
 /* ---------- 特效 ---------- */
@@ -817,7 +940,10 @@ function modal(content) {
   ov.showModal();
   return ov;
 }
-function wordImgs(word) { return h('div', { class: 'word-big' }, [...word].map(c => h('img', { src: charSrc(c), alt: c }))); }
+function wordImgs(word) {
+  return h('div', { class: 'word-big' }, [...word].map(ch => h('span', { class: 'word-character' },
+    h('img', { src: charSrc(ch), alt: ch }), structureBadge(ch))));
+}
 function listenBtn(word, showLabel = false) {
   return h('button', {
     class: showLabel ? 'btn blue listen' : 'say-btn',
@@ -830,15 +956,16 @@ function questionDone(word) {
   const st = G.mistakes === 0 ? 3 : G.mistakes <= 2 ? 2 : 1;
   G.earned += st; addStars(st);
   Snd.good(); confetti(50); flash('答對了！');
-  say('好厲害！', 'cheer');
+  doudou(word ? 'wordDone' : 'groupDone', { word });
+  const encouragement = G.coachLine;
   G.frozen = true;
   select(null); chooseTile(null);
   setProgress(G.qi + 1, G.total, `第 ${G.qi + 1}／${G.total} 題`);
   duringGame(() => {
     const last = G.qi >= G.total - 1;
     const ov = modal([
-      mascot(120, 'cheer'),
-      h('h2', null, '答對了！'), starsEl(st), word ? wordImgs(word) : null,
+      h('h2', null, '答對了！'), coachCard(encouragement, true),
+      starsEl(st), word ? wordImgs(word) : G.act === 4 ? wordImgs(G.found.join('')) : null,
       word ? listenBtn(word, true) : null,
       h('div', { class: 'row' },
         h('button', { class: 'btn white', onclick: () => renderHome(G.opts.task ? 'task' : 'free') }, icon('home'), '離開活動'),
@@ -851,8 +978,7 @@ function finalResult() {
   Snd.win(); confetti(90);
   const act = G.act, words = G.words, opts = G.opts;
   modal([
-    mascot(140, 'cheer'),
-    h('h2', null, '全部完成！'), starsEl(st),
+    h('h2', null, '全部完成！'), coachCard(coachPhrase('finish'), true), starsEl(st),
     h('p', null, `你一共得到 ${G.earned} 粒星星！`),
     h('div', { class: 'row' },
       h('button', { class: 'btn white', onclick: () => startGame(act, words, opts) }, icon('reset'), '再試一次'),
@@ -962,7 +1088,8 @@ function addFound(ch) {
   if (isNew) G.found.push(ch);
   if (G.shelf && isNew) {
     G.shelf.querySelector('.label').textContent = `我拼出的字（${G.found.length}）：`;
-    G.shelf.append(h('button', { class: 'found-char', title: ch, onclick: () => speak(ch) }, h('img', { src: charSrc(ch), alt: ch })));
+    G.shelf.append(h('button', { class: 'found-char', title: ch, onclick: () => speak(ch) },
+      h('img', { src: charSrc(ch), alt: ch }), structureBadge(ch)));
   }
   return isNew;
 }
@@ -1000,7 +1127,7 @@ function unavailable(message) {
 /* 活動一：看圖拼字 */
 MODES[1] = {
   start() {
-    G.queue = [...G.words]; G.total = G.queue.length; G.qi = 0;
+    G.queue = [...G.words].reverse(); G.total = G.queue.length; G.qi = 0;
     setToolbar([tool(icon('bulb'), '提示', 'yellow', () => this.hint())]);
     this.load();
   },
@@ -1018,7 +1145,7 @@ MODES[1] = {
     });
     G.unit = size / 768;
     setLibrary(shuffle(partsOf([...w])));
-    say('看看圖，聽老師讀，再把部件拖進格子。');
+    doudou('pictureStart');
   },
   trayPos() { return { x: 600, y: 618 }; },
   tidyArea() { return { x: 50, y: 520, w: 1100, h: 193 }; },
@@ -1030,7 +1157,7 @@ MODES[1] = {
     if (!cands.length) {
       const other = G.boxes.some(bb => bb !== b && !bb.done && D[bb.ch].parts.some((pt, i) => pt.n === p.name && !bb.filled.has(i)));
       eject(p);
-      say(other ? '這個部件屬於另一個字喔！' : '這個部件不在這個字裏，再想想！', 'think', true);
+      doudou(other ? 'retryOtherBox' : 'retryPicture');
       return;
     }
     let best = null;
@@ -1040,9 +1167,9 @@ MODES[1] = {
       if (b.filled.size === parts.length) {
         boxShowChar(b, b.ch);
         if (G.boxes.every(x => x.done)) questionDone(G.word);
-        else say('拼好一個字了！繼續加油！', 'cheer');
-      } else say('對了！繼續拼吧！', 'happy');
-    } else say('部件選對了！放到正確的位置吧～', 'think');
+        else doudou('character', { char: b.ch, next: characterNext(b.ch, '再把另一個字拼好吧！') });
+      } else doudou('partCorrect');
+    } else doudou('adjustPosition');
   },
   hint() {
     showWordHints();
@@ -1063,7 +1190,7 @@ MODES[2] = {
     G.libHead.append(toggle);
     setToolbar([tool(icon('bulb'), '提示', 'yellow', () => this.hint())]);
     this.lib();
-    say('自由拼砌你認識的字吧！拼對了會自動吸附喔！');
+    doudou('exploreStart');
   },
   lib() {
     clearCanvasHint();
@@ -1073,18 +1200,18 @@ MODES[2] = {
     if (p.kind !== 'part') return;
     if (!isMulti(p.ch)) {
       if (addFound(p.ch)) addStars(1);
-      say(`你放下了「${p.ch}」！試試再拼一個字吧。`);
+      doudou('character', { char: p.ch, next: '試試再拼一個你認識的字。' });
       return;
     }
     const m = detect(p, MULTI);
     if (m) {
       const isNew = !G.found.includes(m.ch);
       formChar(m); if (isNew) addStars(1);
-      say(`你拼出了「${m.ch}」！再拼一個吧！`, 'cheer');
+      doudou('character', { char: m.ch, next: characterNext(m.ch, '再試試其他部件的組合。') });
     }
   },
   hint() { showCanvasHint(G.allParts ? Object.keys(courseData) : G.chars); },
-  reset() { clearBoard(); say('畫布清空了，重新開始吧！'); }
+  reset() { clearBoard(); doudou('reset'); }
 };
 
 /* 活動三：部件補全 */
@@ -1130,7 +1257,7 @@ MODES[3] = {
     });
     const miss = D[w[q.ci]].parts[q.pi];
     setLibrary(shuffle([{ ch: w[q.ci], idx: q.pi }, ...distractors(D[w[q.ci]].parts.map(p => p.n), 2, miss)]));
-    say(n === 1 ? '看看圖片，把缺少的部件放進虛線框。' : '看看旁邊的字，把缺少的部件放進虛線框。');
+    doudou(n === 1 ? 'singleCompletionStart' : 'completionStart');
   },
   trayPos() { return { x: rand(200, 1000), y: rand(560, 650) }; },
   tidyArea() { return { x: 60, y: 520, w: 1080, h: 180 }; },
@@ -1140,7 +1267,7 @@ MODES[3] = {
     if (p.name === D[b.ch].parts[G.q.pi].n) {
       const t = partTarget(b, b.ch, G.q.pi);
       if (Math.hypot(c.x - t.cx, c.y - t.cy) > b.size * .22) {
-        say('你找對了！把部件移到虛線框裏。'); return;
+        doudou('adjustSlot'); return;
       }
       snapTo(p, b, b.ch, G.q.pi); Snd.snap();
       G.slot.remove(); b.el.classList.remove('target-glow');
@@ -1148,13 +1275,13 @@ MODES[3] = {
       questionDone(G.q.w);
     } else {
       eject(p);
-      say(G.q.w.length === 1 ? '再看看圖片，試試另一個部件。' : '再看看旁邊的字，試試另一個部件。', 'think', true);
+      doudou(G.q.w.length === 1 ? 'retryPicture' : 'retryCompletion');
     }
   },
   hint() {
     G.hints++;
-    if (G.hints === 1 && speak(G.q.w)) { say('聽聽這個詞語的讀音吧！', 'think'); }
-    else { glowCard(D[G.q.w[G.q.ci]].parts[G.q.pi].n); say('答案就是發光的部件！', 'think'); G.mistakes++; }
+    if (G.hints === 1 && speak(G.q.w)) { doudou('hintSound'); }
+    else { glowCard(D[G.q.w[G.q.ci]].parts[G.q.pi].n); doudou('hintGlow'); G.mistakes++; }
   },
   reset() { this.load(); }
 };
@@ -1175,8 +1302,59 @@ MODES[4] = {
     G.queue = selectedExtensionGroups(G.words, G.opts.common);
     G.total = G.queue.length; G.qi = 0;
     if (!G.total) return unavailable('請選擇至少兩個同部件的課外詞語。');
+    if (!G.opts.task && !G.opts.common) return this.chooseGroups();
     setToolbar([tool(icon('bulb'), '提示', 'yellow', () => this.hint())]);
     this.load();
+  },
+  chooseGroups() {
+    clearBoard(); G.frozen = true;
+    G.boardTop.replaceChildren(); G.toolbar.replaceChildren();
+    G.libHead.replaceChildren(h('h2', null, '選部首'), h('small', null, '按課堂進度選擇'));
+    setLibrary([]);
+    G.libGrid.append(h('p', { class: 'radical-instructions' }, '每組先重溫課文，再用相同部首學習三個新字。'));
+    setProgress(0, 1, '選擇學習部首');
+    const available = G.queue;
+    const saved = store.get('extensionGroupNames', null);
+    const defaults = extensionGroups.filter(group => group.defaultSelected).map(group => group.name);
+    const validSaved = Array.isArray(saved) ? saved.filter(name => available.some(group => group.name === name)) : [];
+    const selected = new Set(validSaved.length ? validSaved : defaults.filter(name => available.some(group => group.name === name)));
+    if (!selected.size) available.forEach(group => selected.add(group.name));
+    const count = h('p', { class: 'radical-selection-count', role: 'status' });
+    const start = h('button', { class: 'btn big', onclick: () => {
+      if (!selected.size) return;
+      Snd.click();
+      const names = available.filter(group => selected.has(group.name)).map(group => group.name);
+      store.set('extensionGroupNames', names);
+      G.queue = available.filter(group => selected.has(group.name));
+      G.total = G.queue.length; G.qi = 0;
+      G.libHead.replaceChildren(h('h2', null, '部件庫'), h('small', null, '拖動或點選部件'));
+      setToolbar([tool(icon('bulb'), '提示', 'yellow', () => this.hint())]);
+      this.load();
+    } }, '開始學習');
+    const update = () => {
+      count.textContent = selected.size ? '已選 ' + selected.size + ' 組部首' : '請選擇至少一組部首';
+      start.disabled = !selected.size;
+    };
+    const choices = h('div', { class: 'radical-options' }, available.map(group => {
+      const ch = group.reviewWords.flatMap(word => [...word])
+        .find(c => courseData[c].parts.some(part => part.n === group.name));
+      const part = courseData[ch].parts.find(part => part.n === group.name);
+      const checkbox = h('input', { type: 'checkbox', value: group.name, checked: selected.has(group.name),
+        onchange: event => {
+          if (event.target.checked) selected.add(group.name); else selected.delete(group.name);
+          update();
+        } });
+      return h('label', { class: 'radical-option' }, checkbox,
+        h('img', { class: 'radical-glyph', src: partSrc(part.f), alt: '', draggable: 'false' }),
+        h('span', { class: 'radical-copy' }, h('strong', null, group.label),
+          h('small', null, '重溫「' + group.reviewWords.join('、') + '」')));
+    }));
+    G.reviewPanel = h('section', { class: 'radical-picker', 'aria-label': '選擇學習部首' },
+      h('h2', null, '今天學哪個部首？'), h('p', null, '可選一組，也可以一次學習多組。'),
+      choices, h('div', { class: 'radical-picker-actions' }, count, start));
+    G.boardEl.append(G.reviewPanel);
+    update();
+    doudou('groupSelect');
   },
   wordFor(ch) {
     const group = extensionGroups.find(g => g.targets.includes(ch));
@@ -1207,7 +1385,7 @@ MODES[4] = {
       h('p', null, '「' + known.join('、') + '」都有「' + q.name + '」部首。'),
       h('button', { class: 'btn', onclick: () => { Snd.click(); this.loadNew(); } }, '學習新字'));
     G.boardEl.append(G.reviewPanel);
-    say('先看看課文裏的字，綠色的是共同部首。');
+    doudou('groupReview');
   },
   loadNew() {
     clearBoard(); G.frozen = false;
@@ -1238,7 +1416,7 @@ MODES[4] = {
       return parts[o.idx].n !== q.name || parts.filter(part => part.n === q.name).length > 1;
     });
     setLibrary(shuffle(others));
-    say('每格都有共同部首，把部件拖進任一格，拼好再看詞語！');
+    doudou('groupStart');
   },
   trayPos() { return { x: W / 2, y: H / 2 }; },
   onDrop(p) {
@@ -1250,7 +1428,7 @@ MODES[4] = {
       const parts = D[target].parts, commonIndex = parts.findIndex(part => part.n === G.q.name);
       return parts.some((part, i) => i !== commonIndex && part.n === p.name);
     });
-    if (!ch) { say('這個字已經拼過了，試試另一個部件。'); return; }
+    if (!ch) { doudou('duplicate'); return; }
     const commonIndex = D[ch].parts.findIndex(part => part.n === G.q.name);
     const otherIndex = D[ch].parts.findIndex((part, i) => i !== commonIndex && part.n === p.name);
     box.ch = ch; box.filled.clear();
@@ -1264,7 +1442,7 @@ MODES[4] = {
         [...word].map(c => h('img', { src: charSrc(c), alt: '' }))), listenBtn(word)));
     const complete = G.found.length === G.targets.length;
     if (complete) questionDone(null);
-    else say(`你拼出了「${ch}」！看看詞語，也可以繼續拼字。`, 'cheer');
+    else doudou('character', { char: ch, next: characterNext(ch, '看看詞語參考，再拼下一個字。') });
   },
   hint() {
     const remaining = G.targets.filter(ch => !G.found.includes(ch));
@@ -1295,7 +1473,7 @@ MODES[5] = {
     G.topRight.replaceChildren(G.timePill, h('span', { class: 'pill score-pill' }, G.scoreEl, ' 字'));
     setProgress(1, 1, `${G.seconds} 秒挑戰`);
     setToolbar([tool(icon('bulb'), '提示', 'yellow', () => this.hint())]);
-    say(`在 ${G.seconds} 秒內，拼出最多的字！`);
+    doudou('timedStart', { seconds: G.seconds });
     this.countdown();
   },
   countdown() {
@@ -1334,7 +1512,8 @@ MODES[5] = {
       const isNew = !G.found.includes(m.ch);
       formChar(m);
       G.scoreEl.textContent = G.found.length;
-      say(isNew ? `+1！拼出了「${m.ch}」！` : `「${m.ch}」已經拼過了，試試別的字！`, 'cheer');
+      if (isNew) doudou('character', { char: m.ch, next: characterNext(m.ch, '試試再拼另一個字。') });
+      else doudou('duplicate');
       if (G.found.length === G.targets.length) {
         clearInterval(G.timer);
         G.frozen = true;
@@ -1353,11 +1532,11 @@ MODES[5] = {
     st ? (Snd.win(), confetti(80)) : Snd.bad();
     const act = G.act, words = G.words, opts = G.opts;
     modal([
-      mascot(130, st ? 'cheer' : ''),
       h('h2', { class: st ? '' : 'sad' }, completed ? '全部拼好了！' : '時間到！'),
+      coachCard(coachPhrase(n ? 'timedFinish' : 'timedRetry', { count: n }), true),
       h('div', { class: 'score-big' }, n), h('p', { style: { fontSize: '20px', fontWeight: 700, margin: '4px 0' } }, '個字'),
       starsEl(st),
-      n ? h('div', { class: 'word-big' }, G.found.map(c => h('img', { src: charSrc(c), alt: c, style: { width: '70px', height: '70px' } }))) : h('p', null, '下次一定可以的！'),
+      n ? wordImgs(G.found.join('')) : h('p', null, '下次一定可以的！'),
       h('div', { class: 'row' },
         h('button', { class: 'btn white', onclick: () => startGame(act, words, opts) }, icon('reset'), '再試一次'),
         h('button', { class: 'btn', onclick: () => renderHome(opts.task ? 'task' : 'free') }, icon('home'), '選活動'))]);
@@ -1366,7 +1545,150 @@ MODES[5] = {
     clearCanvasHint();
     G.pieces.forEach(p => removePiece(p));
     chooseTile(null);
-    say('畫布清好了，繼續拼！');
+    doudou('reset');
+  }
+};
+
+/* 活動六：部件記憶翻翻樂 */
+MODES[6] = {
+  start() {
+    const chars = uniq(G.words.flatMap(word => [...word])).filter(hasTwoParts);
+    if (!chars.length) return unavailable('請選擇有兩個部件的字，例如「校車」或「談天」。');
+    G.memoryTargets = shuffle(chars).slice(0, 3);
+    G.libHead.replaceChildren(h('h2', null, '怎樣玩'), h('small', null, '老師點選，學生指出'));
+    G.libHead.closest('.lib').setAttribute('aria-label', '翻牌玩法');
+    setLibrary([]);
+    G.libGrid.append(h('ol', { class: 'memory-instructions' },
+      h('li', null, '先看看部件，記住卡片的位置。'),
+      h('li', null, '蓋牌後，指出兩張卡。'),
+      h('li', null, '看看兩個部件能否拼成字。')));
+    G.memoryHintBtn = tool(icon('bulb'), '提示', 'yellow', () => this.hint());
+    G.memoryHintBtn.title = '顯示所有部件 3 秒';
+    G.toolbar.replaceChildren(G.memoryHintBtn,
+      tool(icon('reset'), '重新洗牌', 'orange', () => this.reset()));
+    this.reset();
+  },
+  reset() {
+    clearBoard();
+    G.memoryPanel?.remove();
+    G.frozen = false; G.found = [];
+    G.memoryPhase = 'preview'; G.memorySelected = []; G.memoryMoves = 0;
+    G.boardTop.replaceChildren(); makeShelf('我配出的字：');
+    G.memoryMoveCount = h('span', null, '0');
+    G.topRight.replaceChildren(h('span', { class: 'pill' }, '配對 ', G.memoryMoveCount, ' 次'));
+    setProgress(0, G.memoryTargets.length, '已配對 0／' + G.memoryTargets.length);
+    G.memoryCards = shuffle(G.memoryTargets.flatMap(ch => D[ch].parts.map((part, idx) => ({
+      ch, idx, part, open: true, matched: false
+    }))));
+    const grid = h('div', { class: 'memory-grid', style: { '--memory-columns': G.memoryCards.length === 6 ? 3 : 2 } });
+    G.memoryCards.forEach((card, index) => {
+      card.front = h('img', { class: 'memory-front', src: partSrc(card.part.f), alt: '' });
+      card.back = h('img', { class: 'memory-back', src: 'assets/ui/doudou.webp', alt: '', hidden: true });
+      card.matchLabel = h('span', { class: 'memory-match-label', hidden: true }, '已配對');
+      card.el = h('button', {
+        class: 'memory-card', style: { '--pc': PASTELS[index % PASTELS.length] },
+        onclick: () => this.choose(card)
+      }, h('span', { class: 'memory-card-number', 'aria-hidden': 'true' }, index + 1),
+      card.front, card.back, card.matchLabel);
+      grid.append(card.el);
+    });
+    G.memoryFeedback = h('p', { class: 'memory-feedback' },
+      '先看看這 ' + G.memoryCards.length + ' 張卡，記住部件的位置。');
+    G.memoryAction = h('button', { class: 'btn big memory-action', onclick: () => this.advance() }, '蓋牌開始');
+    G.memoryPanel = h('section', { class: 'memory-panel', 'aria-label': '部件記憶卡片' },
+      grid, G.memoryFeedback, h('div', { class: 'memory-actions' }, G.memoryAction));
+    G.boardEl.append(G.memoryPanel);
+    this.syncCards();
+    doudou('memoryStart');
+  },
+  syncCards() {
+    G.memoryCards.forEach((card, index) => {
+      const visible = G.memoryPhase === 'hint' || card.open || card.matched;
+      card.front.hidden = !visible; card.back.hidden = visible;
+      card.matchLabel.hidden = !card.matched;
+      card.el.disabled = G.memoryPhase !== 'play' || card.open || card.matched;
+      card.el.classList.toggle('is-open', visible);
+      card.el.classList.toggle('is-matched', card.matched);
+      card.el.setAttribute('aria-label', '第 ' + (index + 1) + ' 張卡，' +
+        (visible ? '部件 ' + card.part.n + (card.matched ? '，已配對' : '') : '背面'));
+    });
+    G.memoryAction.hidden = G.memoryPhase !== 'preview' && G.memoryPhase !== 'retry';
+    G.memoryAction.textContent = G.memoryPhase === 'preview' ? '蓋牌開始' : '再試一次';
+    G.memoryHintBtn.disabled = G.memoryPhase === 'preview' || G.memoryPhase === 'finished';
+  },
+  advance() {
+    const focusCard = G.memoryPhase === 'retry' ? G.memorySelected[0] : G.memoryCards[0];
+    if (G.memoryPhase === 'preview') G.memoryCards.forEach(card => { card.open = false; });
+    else if (G.memoryPhase === 'retry') G.memorySelected.forEach(card => { card.open = false; });
+    else return;
+    G.memorySelected = []; G.memoryPhase = 'play';
+    G.memoryFeedback.textContent = '指出兩張卡，試試能否拼成一個字。';
+    this.syncCards();
+    focusCard.el.focus({ preventScroll: true });
+    doudou('memoryPlay');
+  },
+  hint() {
+    if (G.frozen || !['play', 'retry', 'hint'].includes(G.memoryPhase)) return;
+    clearTimeout(G.memoryHintTimer);
+    G.memoryPhase = 'hint';
+    G.memoryFeedback.textContent = '看看所有部件，3 秒後會自動蓋牌。';
+    this.syncCards();
+    doudou('memoryHint');
+    G.memoryHintTimer = duringGame(() => {
+      G.memoryCards.forEach(card => { if (!card.matched) card.open = false; });
+      G.memorySelected = []; G.memoryPhase = 'play';
+      G.memoryFeedback.textContent = '提示結束了，再指出兩張卡，試試拼成字。';
+      this.syncCards();
+      doudou('memoryHintEnd');
+    }, 3000);
+  },
+  choose(card) {
+    if (G.frozen || G.memoryPhase !== 'play' || card.open || card.matched) return;
+    card.open = true; G.memorySelected.push(card); Snd.pick();
+    this.syncCards();
+    if (G.memorySelected.length < 2) {
+      G.memoryFeedback.textContent = '再指出一張卡。';
+      return;
+    }
+    G.memoryMoves++; G.memoryMoveCount.textContent = G.memoryMoves;
+    const names = G.memorySelected.map(item => item.part.n).sort().join('|');
+    const ch = G.memoryTargets.find(target => !G.found.includes(target) &&
+      D[target].parts.map(part => part.n).sort().join('|') === names);
+    if (!ch) {
+      G.mistakes++; G.memoryPhase = 'retry';
+      G.memoryFeedback.textContent = '這兩個部件還拼不出這回合的字，記住位置，再試一次。';
+      this.syncCards(); Snd.drop();
+      doudou('memoryRetry');
+      return;
+    }
+    G.memorySelected.forEach(item => { item.matched = true; });
+    G.memorySelected = [];
+    addFound(ch); Snd.good();
+    G.memoryFeedback.replaceChildren(
+      h('img', { class: 'memory-made', src: charSrc(ch), alt: ch }),
+      h('span', { class: 'memory-success-copy' }, h('span', null, '配對成功！拼出了「' + ch + '」。'), structureBadge(ch)));
+    setProgress(G.found.length, G.memoryTargets.length, '已配對 ' + G.found.length + '／' + G.memoryTargets.length);
+    if (G.found.length === G.memoryTargets.length) {
+      G.memoryPhase = 'finished';
+      duringGame(() => this.finish(), 900);
+    }
+    this.syncCards();
+    doudou('character', { char: ch, next: characterNext(ch,
+      G.found.length === G.memoryTargets.length ? '再看看我們配好的字。' : '回想卡片的位置，再找下一對部件。') });
+  },
+  finish() {
+    G.frozen = true;
+    const stars = G.mistakes === 0 ? 3 : G.mistakes <= 2 ? 2 : 1;
+    addStars(stars); Snd.win(); confetti(60);
+    const words = G.words, opts = G.opts;
+    modal([
+      h('h2', null, '全部配對成功！'), coachCard(coachPhrase('memoryFinish', { count: G.found.length }), true), starsEl(stars),
+      wordImgs(G.found.join('')),
+      h('p', null, '用了 ' + G.memoryMoves + ' 次配對，拼出 ' + G.found.length + ' 個字。'),
+      h('div', { class: 'row' },
+        h('button', { class: 'btn white', onclick: () => startGame(6, words, opts) }, icon('reset'), '再玩一回合'),
+        h('button', { class: 'btn', onclick: () => renderHome(opts.task ? 'task' : 'free') }, icon('home'), '選活動'))
+    ]);
   }
 };
 
@@ -1397,7 +1719,7 @@ function openTeacher() {
   ov.addEventListener('cancel', e => { e.preventDefault(); close(); });
 
   let bankId = bank().id;
-  let draftAct = 1;
+  let draftAct = learningMode().firstActivity;
   const bankSelect = (tab, value) => h('select', {
     'aria-label': '課文', onchange: e => { bankId = e.target.value; show(tab); }
   }, banks().map(b => h('option', { value: b.id, selected: b.id === value }, '《' + b.title + '》')));
@@ -1491,6 +1813,7 @@ function openTeacher() {
         else if (draftAct === 3 && words.some(w => ![...w].some(isMulti))) problem = '部件補全的每個詞語須有至少一個可拆的字。';
         else if (draftAct === 4 && !selectedExtensionGroups(words, common.value).length) problem = '請在同一部件組中選擇至少兩個課外詞語。';
         else if (draftAct === 5 && !chars.some(isMulti)) problem = '請選擇至少一個有可拆部件的字。';
+        else if (draftAct === 6 && !chars.some(hasTwoParts)) problem = '翻翻樂需要至少一個有兩個部件的字。';
         msg.textContent = problem;
         if (problem) return null;
         return { act: draftAct, words, common: draftAct === 4 ? common.value : '', seconds: secondsFor(sec.value), name: name.value.trim() };
@@ -1499,6 +1822,7 @@ function openTeacher() {
       return [
         h('p', { class: 'help' }, '發佈後，學生可在「老師任務」開始。任務會儲存在這部裝置的瀏覽器。'),
         h('p', { class: 'f' }, '活動'), actBox, secRow,
+        draftAct === 6 ? h('p', { class: 'help' }, '每回合會從所選詞語抽出最多三個字，每個字有兩個部件。老師可先展示卡片，再按「蓋牌開始」。') : null,
         h('p', { class: 'f' }, draftAct === 4 ? '教材' : '課文'),
         draftAct === 4 ? h('p', { class: 'help' }, '課外拓展・學習新的同部件字') : bankSelect('task', b.id),
         h('p', { class: 'f' }, '詞語'), ...chapters, commonRow, field('任務名稱', name.id, name), msg,
@@ -1507,7 +1831,8 @@ function openTeacher() {
             const t = makeTask(); if (!t) return;
             const tasks = store.get('tasks', []); tasks.push(t);
             if (!store.set('tasks', tasks)) { msg.textContent = '未能儲存，請檢查瀏覽器的儲存空間。'; return; }
-            msg.textContent = '已發佈。學生可到「老師任務」開始。'; drawList(); Snd.good();
+            msg.textContent = '已發佈。請在「' + modeForActivity(actById(t.act)).name + '」的「老師任務」開始。';
+            drawList(); Snd.good();
           } }, '發佈任務'),
           h('button', { class: 'btn white', onclick: () => {
             const t = makeTask(); if (!t) return;
